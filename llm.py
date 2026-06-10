@@ -1,18 +1,18 @@
 """
 llm.py — Qwen3 wrapper for ChatOllama.
 
-Behavior:
-- /think   -> reasoning enabled
-- /no_think -> reasoning disabled
-- UI decides whether to print a Thinking block based on streamed chunks
+Phase 4 additions:
+- tool-friendly system prompt
+- bind_tools helper for native LangChain tool calling
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Sequence
 
 from langchain_ollama import ChatOllama
+from langchain_core.tools import BaseTool
 
 _THINKING_PARAMS = {
     "temperature": float(os.getenv("TEMPERATURE_THINKING", "0.35")),
@@ -35,6 +35,30 @@ Follow these rules:
 - If the user asks for code, return runnable code with minimal explanation unless more detail is requested.
 - If unsure, say so rather than guessing.
 - Prefer correctness over verbosity.
+
+Tool-use rules:
+- Use tools when they clearly improve the answer.
+- Do not invent file contents, web results, time values, or code execution results.
+- When a tool result is available, trust it over guesswork.
+- If a task can be completed with tools, finish it instead of only describing how to do it.
+- TOOL USAGE RULES
+
+If a tool can answer the question:
+
+DO NOT describe the tool.
+DO NOT discuss using the tool.
+DO NOT plan tool usage.
+
+Call the tool immediately.
+
+Bad:
+"I should use web_search..."
+
+Good:
+<tool call>
+
+After tool results arrive:
+answer the user.
 """
 
 
@@ -56,11 +80,6 @@ def create_llm(
 ) -> ChatOllama:
     """
     Create a ChatOllama instance tuned for Qwen3:8B on modest hardware.
-
-    Important:
-    - reasoning follows the selected mode
-    - thinking=True gives reasoning trace
-    - thinking=False hides reasoning trace
     """
     profile = _THINKING_PARAMS if thinking else _FAST_PARAMS
 
@@ -84,3 +103,12 @@ def create_llm(
 
     params.update(overrides)
     return ChatOllama(**params)
+
+
+def bind_tools(llm: ChatOllama, tools: Sequence[BaseTool]) -> Any:
+    """
+    Bind LangChain tools to the model.
+    Kept as a thin helper so the rest of the app does not depend on the exact
+    model wrapper type.
+    """
+    return llm.bind_tools(list(tools))

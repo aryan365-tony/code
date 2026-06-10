@@ -11,5 +11,6 @@ langchain-ollama>=0.2.0
 # Terminal UI
 rich>=13.0.0
 
-# Utilities
+# Tooling
+beautifulsoup4>=4.12.0
 python-dotenv>=1.0.0

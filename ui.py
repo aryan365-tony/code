@@ -1,36 +1,28 @@
 """
 ui.py — Rich terminal UI for Qwen3.
 
-Features
---------
-• Live token streaming
-• Qwen3 <think>...</think> parser
-• Thinking panel rendering
-• /think and /no_think support
-• Session banners and commands
+Phase 4 fixes:
+- stream reasoning from chunk.additional_kwargs["reasoning_content"]
+- keep fallback support for <think>...</think>
+- extract tool calls from streamed chunks
 """
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+import json
+from typing import Any, AsyncIterator
 
+from rich.syntax import Syntax
+from rich.panel import Panel
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.style import Style
 from rich.text import Text
-from rich import box
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Shared Console
-# ──────────────────────────────────────────────────────────────────────────────
 
 console = Console(highlight=False)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Styles
-# ──────────────────────────────────────────────────────────────────────────────
-
+SHOW_TOOL_OUTPUT = True
 STYLE_THINKING = Style(color="bright_black", italic=True)
 STYLE_RESPONSE = Style(color="white")
 
@@ -46,10 +38,6 @@ STYLE_BANNER = Style(color="bright_cyan", bold=True)
 STYLE_MODE_ON = Style(color="magenta", bold=True)
 STYLE_MODE_OFF = Style(color="yellow", bold=True)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Commands
-# ──────────────────────────────────────────────────────────────────────────────
-
 COMMANDS = {
     "/help": "List commands",
     "/think": "Enable Qwen3 reasoning",
@@ -57,25 +45,19 @@ COMMANDS = {
     "/clear": "Clear history",
     "/undo": "Remove last exchange",
     "/compact": "Summarise history",
+    "/tools on": "Show tool execution",
+    "/tools off": "Hide tool execution",
     "/export": "Export conversation",
     "/session": "Show session stats",
+    "/tools": "List available tools",
     "/exit": "Quit",
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Banner
-# ──────────────────────────────────────────────────────────────────────────────
 
 def print_banner(model: str, thinking: bool = True) -> None:
     banner = Text()
-    banner.append(
-        "  Personal AI Assistant  ",
-        style=STYLE_BANNER,
-    )
-    banner.append(
-        f"  model: {model}  ",
-        style=STYLE_DIM,
-    )
+    banner.append("  Personal AI Assistant  ", style=STYLE_BANNER)
+    banner.append(f"  model: {model}  ", style=STYLE_DIM)
 
     console.print(
         Panel(
@@ -99,72 +81,99 @@ def print_banner(model: str, thinking: bool = True) -> None:
 def _print_mode_line(thinking: bool) -> None:
     if thinking:
         console.print(
-            Text("  Mode: ", style=STYLE_DIM)
-            + Text(
-                "🧠 thinking ON",
-                style=STYLE_MODE_ON,
-            )
+            Text("  Mode: ", style=STYLE_DIM) + Text("🧠 thinking ON", style=STYLE_MODE_ON)
         )
     else:
         console.print(
-            Text("  Mode: ", style=STYLE_DIM)
-            + Text(
-                "⚡ thinking OFF",
-                style=STYLE_MODE_OFF,
-            )
+            Text("  Mode: ", style=STYLE_DIM) + Text("⚡ thinking OFF", style=STYLE_MODE_OFF)
         )
-
     console.print()
 
 
 def print_mode_change(thinking: bool) -> None:
     if thinking:
-        console.print(
-            "\n[magenta bold]🧠 Thinking mode enabled[/magenta bold]\n"
-        )
+        console.print("\n[magenta bold]🧠 Thinking mode enabled[/magenta bold]\n")
     else:
-        console.print(
-            "\n[yellow bold]⚡ Thinking mode disabled[/yellow bold]\n"
-        )
+        console.print("\n[yellow bold]⚡ Thinking mode disabled[/yellow bold]\n")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Help
-# ──────────────────────────────────────────────────────────────────────────────
 
 def print_help() -> None:
-    console.print(
-        Rule(
-            "Commands",
-            style=STYLE_DIM,
-        )
-    )
-
+    console.print(Rule("Commands", style=STYLE_DIM))
     for cmd, desc in COMMANDS.items():
-        console.print(
-            f"[yellow]{cmd:<14}[/yellow] "
-            f"[bright_black]{desc}[/bright_black]"
-        )
+        console.print(f"[yellow]{cmd:<14}[/yellow] [bright_black]{desc}[/bright_black]")
+    console.print()
+
+
+def print_error(msg: str) -> None:
+    console.print(f"\n[red bold]✗ {msg}[/red bold]\n")
+
+def set_tool_visibility(enabled: bool) -> None:
+    global SHOW_TOOL_OUTPUT
+    SHOW_TOOL_OUTPUT = enabled
+
+
+def print_tool_call(
+    tool_name: str,
+    args: dict,
+) -> None:
+
+    if not SHOW_TOOL_OUTPUT:
+        return
 
     console.print()
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────────────────────────────────────
-
-def print_error(msg: str) -> None:
     console.print(
-        f"\n[red bold]✗ {msg}[/red bold]\n"
+        Panel(
+            f"[bold cyan]{tool_name}[/bold cyan]",
+            title="🔧 Tool Call",
+            expand=False,
+        )
+    )
+
+    formatted = json.dumps(
+        args,
+        indent=2,
+        ensure_ascii=False,
+        default=str,
+    )
+
+    console.print(
+        Syntax(
+            formatted,
+            "json",
+            word_wrap=True,
+        )
+    )
+
+
+def print_tool_result(
+    tool_name: str,
+    result: str,
+    elapsed: float | None = None,
+) -> None:
+
+    if not SHOW_TOOL_OUTPUT:
+        return
+
+    title = f"📄 Result • {tool_name}"
+
+    if elapsed is not None:
+        title += f" ({elapsed:.2f}s)"
+
+    console.print()
+
+    console.print(
+        Panel(
+            result[:5000],
+            title=title,
+            expand=False,
+        )
     )
 
 
 def print_info(msg: str) -> None:
-    console.print(
-        f"[bright_black]{msg}[/bright_black]"
-    )
+    console.print(f"[bright_black]{msg}[/bright_black]")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Thinking Block
-# ──────────────────────────────────────────────────────────────────────────────
 
 def _print_thinking_header() -> None:
     console.print(
@@ -182,225 +191,193 @@ def _print_thinking_footer(chars: int) -> None:
         f"[/bright_black]\n"
     )
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Qwen3 Think Parser
-# ──────────────────────────────────────────────────────────────────────────────
 
 _OPEN = "<think>"
 _CLOSE = "</think>"
 
 
 class ThinkParser:
-    def __init__(self):
+    """
+    Fallback parser for models that emit <think>...</think> in plain content.
+    Qwen3 reasoning should normally arrive through reasoning_content instead.
+    """
+
+    def __init__(self) -> None:
         self.state = "BEFORE"
         self.buffer = ""
 
-    def feed(
-        self,
-        chunk: str,
-    ) -> list[tuple[str, str]]:
-
-        result = []
+    def feed(self, chunk: str) -> list[tuple[str, str]]:
+        result: list[tuple[str, str]] = []
         self.buffer += chunk
 
         while self.buffer:
-
             if self.state == "BEFORE":
-
                 idx = self.buffer.find(_OPEN)
 
                 if idx == -1:
                     safe = len(self.buffer) - len(_OPEN)
-
                     if safe > 0:
-                        result.append(
-                            (
-                                "response",
-                                self.buffer[:safe],
-                            )
-                        )
+                        result.append(("response", self.buffer[:safe]))
                         self.buffer = self.buffer[safe:]
-
                     break
 
                 if idx > 0:
-                    result.append(
-                        (
-                            "response",
-                            self.buffer[:idx],
-                        )
-                    )
+                    result.append(("response", self.buffer[:idx]))
 
-                self.buffer = self.buffer[
-                    idx + len(_OPEN):
-                ]
-
+                self.buffer = self.buffer[idx + len(_OPEN):]
                 self.state = "THINK"
 
             elif self.state == "THINK":
-
                 idx = self.buffer.find(_CLOSE)
 
                 if idx == -1:
                     safe = len(self.buffer) - len(_CLOSE)
-
                     if safe > 0:
-                        result.append(
-                            (
-                                "think",
-                                self.buffer[:safe],
-                            )
-                        )
+                        result.append(("think", self.buffer[:safe]))
                         self.buffer = self.buffer[safe:]
-
                     break
 
                 if idx > 0:
-                    result.append(
-                        (
-                            "think",
-                            self.buffer[:idx],
-                        )
-                    )
+                    result.append(("think", self.buffer[:idx]))
 
-                self.buffer = self.buffer[
-                    idx + len(_CLOSE):
-                ]
-
+                self.buffer = self.buffer[idx + len(_CLOSE):]
                 self.state = "AFTER"
 
             else:
-                result.append(
-                    (
-                        "response",
-                        self.buffer,
-                    )
-                )
-
+                result.append(("response", self.buffer))
                 self.buffer = ""
                 break
 
         return result
 
-    def flush(self):
+    def flush(self) -> list[tuple[str, str]]:
         if not self.buffer:
             return []
 
-        kind = (
-            "think"
-            if self.state == "THINK"
-            else "response"
-        )
-
+        kind = "think" if self.state == "THINK" else "response"
         remaining = self.buffer
         self.buffer = ""
-
         return [(kind, remaining)]
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Streaming Renderer
-# ──────────────────────────────────────────────────────────────────────────────
 
-async def stream_response(
-    stream: AsyncIterator,
-) -> tuple[str, str]:
+def _extract_tool_calls(chunk: Any) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
 
+    direct = getattr(chunk, "tool_calls", None)
+    if direct:
+        for call in direct:
+            if isinstance(call, dict):
+                calls.append(call)
+
+    additional = getattr(chunk, "additional_kwargs", None) or {}
+    raw = additional.get("tool_calls") or []
+    for call in raw:
+        if isinstance(call, dict):
+            calls.append(call)
+
+    unique: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for call in calls:
+        marker = json.dumps(call, sort_keys=True, default=str, ensure_ascii=False)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        unique.append(call)
+
+    return unique
+
+
+def _extract_reasoning(chunk: Any) -> str:
+    """
+    Qwen3 usually streams reasoning here.
+    """
+    additional = getattr(chunk, "additional_kwargs", None) or {}
+    reasoning = additional.get("reasoning_content", "") or ""
+    if isinstance(reasoning, str) and reasoning:
+        return reasoning
+    return ""
+
+
+async def stream_response(stream: AsyncIterator) -> tuple[str, str, list[dict[str, Any]]]:
+    """
+    Stream one model response, returning:
+        (thinking_text, answer_text, tool_calls)
+
+    This function handles both:
+    - Qwen3 reasoning_content streaming
+    - fallback <think>...</think> content streaming
+    - tool call extraction from streamed chunks
+    """
     parser = ThinkParser()
-
-    thinking = []
-    response = []
+    thinking: list[str] = []
+    response: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
 
     thinking_started = False
     thinking_closed = False
     response_started = False
 
     async for chunk in stream:
+        reasoning = _extract_reasoning(chunk)
+        if reasoning:
+            if not thinking_started:
+                thinking_started = True
+                _print_thinking_header()
 
-        content = chunk.content or ""
+            thinking.append(reasoning)
+            console.print(reasoning, end="", style=STYLE_THINKING)
 
-        if not content:
-            continue
+        content = getattr(chunk, "content", "") or ""
+        if content:
+            for kind, text in parser.feed(str(content)):
+                if not text:
+                    continue
 
-        for kind, text in parser.feed(content):
+                if kind == "think":
+                    if not thinking_started:
+                        thinking_started = True
+                        _print_thinking_header()
 
-            if not text:
-                continue
+                    thinking.append(text)
+                    console.print(text, end="", style=STYLE_THINKING)
 
-            if kind == "think":
+                else:
+                    if thinking_started and not thinking_closed:
+                        thinking_closed = True
+                        console.print()
+                        _print_thinking_footer(sum(len(x) for x in thinking))
 
-                if not thinking_started:
-                    thinking_started = True
-                    _print_thinking_header()
+                    if not response_started:
+                        response_started = True
+                        console.print(Text("Assistant ", style=STYLE_AI_LABEL))
 
-                thinking.append(text)
+                    response.append(text)
+                    console.print(text, end="", style=STYLE_RESPONSE)
 
-                console.print(
-                    text,
-                    end="",
-                    style=STYLE_THINKING,
-                )
-
-            else:
-
-                if (
-                    thinking_started
-                    and not thinking_closed
-                ):
-                    thinking_closed = True
-
-                    console.print()
-
-                    _print_thinking_footer(
-                        sum(
-                            len(x)
-                            for x in thinking
-                        )
-                    )
-
-                if not response_started:
-                    response_started = True
-
-                    console.print(
-                        Text(
-                            "Assistant ",
-                            style=STYLE_AI_LABEL,
-                        )
-                    )
-
-                response.append(text)
-
-                console.print(
-                    text,
-                    end="",
-                    style=STYLE_RESPONSE,
-                )
+        tool_calls.extend(_extract_tool_calls(chunk))
 
     for kind, text in parser.flush():
+        if not text:
+            continue
 
         if kind == "think":
             thinking.append(text)
         else:
             response.append(text)
 
+    if thinking_started and not thinking_closed:
+        thinking_closed = True
+        console.print()
+        _print_thinking_footer(sum(len(x) for x in thinking))
+
     if response_started:
         console.print()
+    elif response:
+        console.print()
 
-    return (
-        "".join(thinking),
-        "".join(response),
-    )
+    return "".join(thinking).strip(), "".join(response).strip(), tool_calls
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Prompt Label
-# ──────────────────────────────────────────────────────────────────────────────
 
 def print_user_label() -> None:
     console.print()
-
-    console.print(
-        Text(
-            "You",
-            style=STYLE_USER_LABEL,
-        ),
-        end="  ",
-    )
+    console.print(Text("You", style=STYLE_USER_LABEL), end="  ")

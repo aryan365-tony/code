@@ -1,17 +1,3 @@
-"""
-main.py — Personal AI Assistant entry point (Qwen3 optimized)
-
-Features:
-- Qwen3-8B via Ollama
-- /think and /no_think switching
-- Streaming responses
-- Thinking stream shown only when the model actually emits it
-- Short-term memory
-- Long-term SQLite memory
-- Export conversations
-- Manual and automatic history compaction
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -19,8 +5,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple
-
+from ui import set_tool_visibility
 # ── Load .env FIRST ───────────────────────────────────────────────────────────
 
 _env_path = Path(__file__).parent / ".env"
@@ -39,9 +24,10 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 # ── Local modules ────────────────────────────────────────────────────────────
 
-from llm import build_system_prompt, create_llm
+import tools  # noqa: F401  # side-effect import: registers tools
+from executor import run_tool_loop
+from llm import build_system_prompt, create_llm, bind_tools
 from memory import MemoryManager
-
 from ui import (
     console,
     print_banner,
@@ -50,7 +36,9 @@ from ui import (
     print_info,
     print_mode_change,
     print_user_label,
+    stream_response,
 )
+from tools.base import list_tools_text
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Session / Config
@@ -59,58 +47,15 @@ from ui import (
 AUTO_COMPACT = os.getenv("AUTO_COMPACT", "1").strip() != "0"
 COMPACT_AT_TOKENS = int(os.getenv("COMPACT_AT_TOKENS", "6000"))
 SUMMARY_NUM_PREDICT = int(os.getenv("SUMMARY_NUM_PREDICT", "256"))
+MAX_TOOL_ITERATIONS = int(os.getenv("MAX_TOOL_ITERATIONS", "12"))
 
 
 class Session:
     def __init__(self) -> None:
+        self.show_tools = True
         self.start_time = time.monotonic()
         self.turn_count = 0
         self.cancelled = False
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Stream Helper
-# ─────────────────────────────────────────────────────────────────────────────
-
-async def _stream_response_with_reasoning(llm, messages) -> Tuple[str, str]:
-    """
-    Stream reasoning and final answer when the model emits reasoning.
-    If no reasoning tokens arrive, only the answer is shown.
-    """
-    reasoning_parts: list[str] = []
-    answer_parts: list[str] = []
-
-    thinking_started = False
-    answer_started = False
-
-    async for chunk in llm.astream(messages):
-        chunk_reasoning = ""
-        chunk_answer = getattr(chunk, "content", "") or ""
-
-        additional = getattr(chunk, "additional_kwargs", None)
-        if additional:
-            chunk_reasoning = additional.get("reasoning_content", "") or ""
-
-        if chunk_reasoning:
-            if not thinking_started:
-                console.print("[cyan]Thinking:[/cyan]")
-                thinking_started = True
-            console.print(chunk_reasoning, end="")
-            reasoning_parts.append(chunk_reasoning)
-
-        if chunk_answer:
-            if not answer_started:
-                if thinking_started:
-                    console.print()
-                console.print("[bold]Answer:[/bold]")
-                answer_started = True
-            console.print(chunk_answer, end="")
-            answer_parts.append(chunk_answer)
-
-    if thinking_started or answer_started:
-        console.print()
-
-    return "".join(reasoning_parts).strip(), "".join(answer_parts).strip()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -172,6 +117,27 @@ def _export(memory: MemoryManager) -> Path:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Tool loop wrapper
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _run_agent_step(llm, messages):
+    """
+    Run one full tool-calling turn until the model returns a final answer.
+    """
+    bound_llm = bind_tools(llm, tools.get_lc_tools())
+
+    async def _stream_fn(model, model_messages):
+        return await stream_response(model.astream(model_messages))
+
+    return await run_tool_loop(
+        bound_llm,
+        messages,
+        max_iterations=MAX_TOOL_ITERATIONS,
+        stream_fn=_stream_fn,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main Loop
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -219,6 +185,25 @@ async def main() -> None:
 
         if cmd == "/help":
             print_help()
+            continue
+
+        if cmd == "/tools on":
+            session.show_tools = True
+            set_tool_visibility(True)
+            print_info("Tool output enabled.")
+            continue
+
+        if cmd == "/tools off":
+            session.show_tools = False
+            set_tool_visibility(False)
+            print_info("Tool output disabled.")
+            continue
+
+        if cmd == "/tools":
+            console.print()
+            print_info("Registered tools:")
+            console.print(list_tools_text())
+            console.print()
             continue
 
         if cmd == "/think":
@@ -283,13 +268,10 @@ async def main() -> None:
             messages.extend(memory.get_history())
             messages.append(HumanMessage(content=user_input))
 
-            reasoning_text, response_text = await _stream_response_with_reasoning(
-                llm,
-                messages,
-            )
+            reasoning_text, response_text = await _run_agent_step(llm, messages)
 
-            if not response_text.strip():
-                print_error("Model returned empty response.")
+            if not response_text.strip() and not tool_calls:
+                print_error("Model generated reasoning but neither a tool call nor answer.")
                 continue
 
             memory.add_message(HumanMessage(content=user_input))
