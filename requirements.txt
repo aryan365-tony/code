@@ -1,0 +1,15 @@
+# Core
+httpx[http2]>=0.28.0
+pydantic>=2.10.0
+pydantic-settings>=2.10.0
+
+# LangChain + Ollama
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-ollama>=0.2.0
+
+# Terminal UI
+rich>=13.0.0
+
+# Utilities
+python-dotenv>=1.0.0
