@@ -1,16 +1,11 @@
-# Core
 httpx[http2]>=0.28.0
 pydantic>=2.10.0
 pydantic-settings>=2.10.0
-
-# LangChain + Ollama
 langchain>=0.3.0
 langchain-core>=0.3.0
+langchain-openai>=0.3.0
 langchain-ollama>=0.2.0
-
-# Terminal UI
+langchain-community>=0.2.0
 rich>=13.0.0
-
-# Tooling
 beautifulsoup4>=4.12.0
 python-dotenv>=1.0.0

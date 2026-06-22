@@ -1,5 +1,5 @@
 """
-ui.py — Rich terminal UI for Qwen3.
+ui.py — Rich terminal UI for Gemma 4 (served via vLLM).
 
 Phase 4 fixes:
 - stream reasoning from chunk.additional_kwargs["reasoning_content"]
@@ -16,7 +16,6 @@ from rich.syntax import Syntax
 from rich.panel import Panel
 from rich import box
 from rich.console import Console
-from rich.panel import Panel
 from rich.rule import Rule
 from rich.style import Style
 from rich.text import Text
@@ -40,8 +39,8 @@ STYLE_MODE_OFF = Style(color="yellow", bold=True)
 
 COMMANDS = {
     "/help": "List commands",
-    "/think": "Enable Qwen3 reasoning",
-    "/no_think": "Disable Qwen3 reasoning",
+    "/think": "Enable Gemma 4 reasoning",
+    "/no_think": "Disable Gemma 4 reasoning",
     "/clear": "Clear history",
     "/undo": "Remove last exchange",
     "/compact": "Summarise history",
@@ -199,7 +198,7 @@ _CLOSE = "</think>"
 class ThinkParser:
     """
     Fallback parser for models that emit <think>...</think> in plain content.
-    Qwen3 reasoning should normally arrive through reasoning_content instead.
+    Gemma 4 reasoning should normally arrive through reasoning_content instead.
     """
 
     def __init__(self) -> None:
@@ -289,12 +288,24 @@ def _extract_tool_calls(chunk: Any) -> list[dict[str, Any]]:
 
 def _extract_reasoning(chunk: Any) -> str:
     """
-    Qwen3 usually streams reasoning here.
+    Gemma 4 streams reasoning content here when thinking mode is active.
+    With vLLM, this requires the server to be launched with
+    --enable-reasoning --reasoning-parser <parser-for-gemma4>; langchain_openai
+    surfaces the field verbatim in additional_kwargs. If your vLLM build/parser
+    doesn't expose this field, reasoning will still show up via the
+    <think>...</think> fallback in `content` handled by ThinkParser below.
     """
     additional = getattr(chunk, "additional_kwargs", None) or {}
     reasoning = additional.get("reasoning_content", "") or ""
     if isinstance(reasoning, str) and reasoning:
         return reasoning
+        
+    # Check directly in the message dict/kwargs for Ollama compatibility
+    if hasattr(chunk, "__dict__"):
+        reasoning = chunk.__dict__.get("kwargs", {}).get("reasoning_content", "")
+        if isinstance(reasoning, str) and reasoning:
+            return reasoning
+
     return ""
 
 
@@ -304,7 +315,7 @@ async def stream_response(stream: AsyncIterator) -> tuple[str, str, list[dict[st
         (thinking_text, answer_text, tool_calls)
 
     This function handles both:
-    - Qwen3 reasoning_content streaming
+    - Gemma 4 reasoning_content streaming
     - fallback <think>...</think> content streaming
     - tool call extraction from streamed chunks
     """
@@ -362,8 +373,25 @@ async def stream_response(stream: AsyncIterator) -> tuple[str, str, list[dict[st
 
         if kind == "think":
             thinking.append(text)
+            # No need to re-print thinking — header already shown if thinking_started.
         else:
+            # ── FIX: print the lookahead tail that ThinkParser held back ──────
+            # ThinkParser keeps up to len("<think>") or len("</think>") bytes in
+            # its buffer while scanning for tag boundaries.  flush() returns that
+            # tail, which was correctly appended to response[] but was NEVER
+            # printed — causing the last few characters to vanish from the
+            # terminal even though the executor received the full text.
+            if thinking_started and not thinking_closed:
+                thinking_closed = True
+                console.print()
+                _print_thinking_footer(sum(len(x) for x in thinking))
+
+            if not response_started:
+                response_started = True
+                console.print(Text("Assistant ", style=STYLE_AI_LABEL))
+
             response.append(text)
+            console.print(text, end="", style=STYLE_RESPONSE)
 
     if thinking_started and not thinking_closed:
         thinking_closed = True
