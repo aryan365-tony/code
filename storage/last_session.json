@@ -1,32 +1,6 @@
 {
-  "session_id": "29319b00",
-  "turn_count": 1,
+  "session_id": "f21b394e",
+  "turn_count": 0,
   "tool_calls_total": 0,
-  "history": [
-    {
-      "type": "human",
-      "data": {
-        "content": "so up",
-        "additional_kwargs": {},
-        "response_metadata": {},
-        "type": "human",
-        "name": null,
-        "id": null
-      }
-    },
-    {
-      "type": "ai",
-      "data": {
-        "content": "Hey there! Just ready and waiting to help you out. 😊\n\nWhat can I assist you with today? Do you have a task, question, or something you want to work on?",
-        "additional_kwargs": {},
-        "response_metadata": {},
-        "type": "ai",
-        "name": null,
-        "id": null,
-        "tool_calls": [],
-        "invalid_tool_calls": [],
-        "usage_metadata": null
-      }
-    }
-  ]
+  "history": []
 }

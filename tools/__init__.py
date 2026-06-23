@@ -10,7 +10,7 @@ from tools.base import (
 )
 
 # Import modules for side effects so their tools register automatically.
-from tools import code_runner, filesystem, search, utility  # noqa: F401
+from tools import code_runner, filesystem, search, utility, shell, git, web, data, reminders, documents, archive  # noqa: F401
 
 __all__ = [
     "ToolEntry",

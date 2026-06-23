@@ -187,7 +187,8 @@ async def run_tool_loop(
                 dispatched_counts[fp]=dispatched_counts.get(fp,0)+1
 
             tool_messages,parallel_count=await execute_tool_calls(tool_calls,metrics)
-            working_messages.append(AIMessage(content=answer_text or "",additional_kwargs={"tool_calls":tool_calls}))
+            normalized_calls = [_normalize_tool_call(c) for c in tool_calls]
+            working_messages.append(AIMessage(content=answer_text or "", tool_calls=normalized_calls))
             working_messages.extend(tool_messages)
 
             # ── Always nudge after tool results (fixes the single-tool loop) ──

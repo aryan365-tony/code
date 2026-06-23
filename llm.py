@@ -2,6 +2,19 @@ from __future__ import annotations
 import os
 from typing import Any,Sequence
 from langchain_openai import ChatOpenAI
+if os.getenv("INFERENCE_BACKEND", "vllm").lower() == "llamacpp":
+    from langchain_openai.chat_models import base as openai_base
+
+    _orig_convert_delta_to_message_chunk = openai_base._convert_delta_to_message_chunk
+
+    def _patched_convert_delta_to_message_chunk(_dict, default_class):
+        chunk = _orig_convert_delta_to_message_chunk(_dict, default_class)
+        if "reasoning_content" in _dict and _dict["reasoning_content"]:
+            chunk.additional_kwargs["reasoning_content"] = _dict["reasoning_content"]
+        return chunk
+
+    openai_base._convert_delta_to_message_chunk = _patched_convert_delta_to_message_chunk
+
 from langchain_ollama import ChatOllama
 from langchain_core.tools import BaseTool
 _THINKING_PARAMS={"temperature":float(os.getenv("TEMPERATURE_THINKING","1.0")),"top_p":float(os.getenv("TOP_P_THINKING","0.95")),"top_k":int(os.getenv("TOP_K_THINKING","64"))}

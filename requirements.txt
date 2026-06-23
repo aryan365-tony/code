@@ -9,3 +9,7 @@ langchain-community>=0.2.0
 rich>=13.0.0
 beautifulsoup4>=4.12.0
 python-dotenv>=1.0.0
+PySide6>=6.5.0
+qasync>=0.27.1
+pandas>=2.2.0
+markitdown>=0.0.1a3

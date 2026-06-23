@@ -191,19 +191,31 @@ def _print_thinking_footer(chars: int) -> None:
     )
 
 
-_OPEN = "<think>"
-_CLOSE = "</think>"
-
+_OPENS = ("<think>", "<|think|>")
+_CLOSES = ("</think>", "</|think|>", "<|/think|>")
 
 class ThinkParser:
     """
-    Fallback parser for models that emit <think>...</think> in plain content.
+    Fallback parser for models that emit <think>...</think> or <|think|>...</|think|> in plain content.
     Gemma 4 reasoning should normally arrive through reasoning_content instead.
     """
 
     def __init__(self) -> None:
         self.state = "BEFORE"
         self.buffer = ""
+        self._max_open = max(len(x) for x in _OPENS)
+        self._max_close = max(len(x) for x in _CLOSES)
+
+    def _find_first(self, tags: tuple[str, ...]) -> tuple[int, int]:
+        best_idx = -1
+        best_len = 0
+        for tag in tags:
+            idx = self.buffer.find(tag)
+            if idx != -1:
+                if best_idx == -1 or idx < best_idx:
+                    best_idx = idx
+                    best_len = len(tag)
+        return best_idx, best_len
 
     def feed(self, chunk: str) -> list[tuple[str, str]]:
         result: list[tuple[str, str]] = []
@@ -211,10 +223,10 @@ class ThinkParser:
 
         while self.buffer:
             if self.state == "BEFORE":
-                idx = self.buffer.find(_OPEN)
+                idx, tag_len = self._find_first(_OPENS)
 
                 if idx == -1:
-                    safe = len(self.buffer) - len(_OPEN)
+                    safe = len(self.buffer) - self._max_open
                     if safe > 0:
                         result.append(("response", self.buffer[:safe]))
                         self.buffer = self.buffer[safe:]
@@ -223,14 +235,14 @@ class ThinkParser:
                 if idx > 0:
                     result.append(("response", self.buffer[:idx]))
 
-                self.buffer = self.buffer[idx + len(_OPEN):]
+                self.buffer = self.buffer[idx + tag_len:]
                 self.state = "THINK"
 
             elif self.state == "THINK":
-                idx = self.buffer.find(_CLOSE)
+                idx, tag_len = self._find_first(_CLOSES)
 
                 if idx == -1:
-                    safe = len(self.buffer) - len(_CLOSE)
+                    safe = len(self.buffer) - self._max_close
                     if safe > 0:
                         result.append(("think", self.buffer[:safe]))
                         self.buffer = self.buffer[safe:]
@@ -239,7 +251,7 @@ class ThinkParser:
                 if idx > 0:
                     result.append(("think", self.buffer[:idx]))
 
-                self.buffer = self.buffer[idx + len(_CLOSE):]
+                self.buffer = self.buffer[idx + tag_len:]
                 self.state = "AFTER"
 
             else:
@@ -327,8 +339,14 @@ async def stream_response(stream: AsyncIterator) -> tuple[str, str, list[dict[st
     thinking_started = False
     thinking_closed = False
     response_started = False
+    full_chunk = None
 
     async for chunk in stream:
+        if full_chunk is None:
+            full_chunk = chunk
+        else:
+            full_chunk += chunk
+            
         reasoning = _extract_reasoning(chunk)
         if reasoning:
             if not thinking_started:
@@ -365,8 +383,6 @@ async def stream_response(stream: AsyncIterator) -> tuple[str, str, list[dict[st
                     response.append(text)
                     console.print(text, end="", style=STYLE_RESPONSE)
 
-        tool_calls.extend(_extract_tool_calls(chunk))
-
     for kind, text in parser.flush():
         if not text:
             continue
@@ -402,6 +418,8 @@ async def stream_response(stream: AsyncIterator) -> tuple[str, str, list[dict[st
         console.print()
     elif response:
         console.print()
+
+    tool_calls = _extract_tool_calls(full_chunk) if full_chunk else []
 
     return "".join(thinking).strip(), "".join(response).strip(), tool_calls
 
