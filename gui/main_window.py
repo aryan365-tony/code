@@ -79,6 +79,7 @@ class MainWindow(QMainWindow):
 
         # Connect controller state signal
         self.controller.state_changed.connect(self.handle_state_changed)
+        self.controller.tokens_changed.connect(self.status_bar.set_tokens)
 
     def _setup_shortcuts(self):
         QShortcut(QKeySequence("Esc"), self, self.stop_generation)

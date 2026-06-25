@@ -36,6 +36,10 @@ class StatusBar(QWidget):
         self.state_badge.setFixedSize(110, 24)
         layout.addWidget(self.state_badge)
 
+        self.token_label = QLabel("Tokens: ~0")
+        self.token_label.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px; font-weight: 600; letter-spacing: 1px; padding-left: 10px;")
+        layout.addWidget(self.token_label)
+
         layout.addStretch()
 
         self.stop_btn = self._tool_button("STOP")
@@ -110,3 +114,6 @@ class StatusBar(QWidget):
             self._set_badge_style(Theme.WARNING_RED_STR, Theme.WARNING_RED_STR)
         else:
             self._set_badge_style(Theme.ACCENT_CYAN_STR, Theme.ACCENT_CYAN_STR)
+
+    def set_tokens(self, tokens: int):
+        self.token_label.setText(f"Tokens: ~{tokens:,}")

@@ -17,6 +17,7 @@ from main import _compact, _export, AUTO_COMPACT, COMPACT_AT_TOKENS
 
 class GuiController(QObject):
     state_changed = Signal(str)  # "IDLE", "THINKING", "RESPONDING", "TOOL_RUNNING", "ERROR"
+    tokens_changed = Signal(int)
 
     def __init__(self, kernel: RuntimeKernel, memory: MemoryManager, session, terminal_view):
         super().__init__()
@@ -238,6 +239,9 @@ class GuiController(QObject):
                 self.memory.add_message(HumanMessage(content=user_text))
                 self.memory.add_message(AIMessage(content=response_text))
                 await self.memory.save_interaction(user_text, response_text)
+                
+            tok_est = self.memory.history_token_estimate()
+            self.tokens_changed.emit(tok_est)
                 
             self.session.history = list(self.memory.get_history())
             self.session.turn_count += 1

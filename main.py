@@ -171,6 +171,8 @@ async def main()->None:
                 memory.add_message(AIMessage(content=response_text))
                 session.history=list(memory.get_history())
                 await memory.save_interaction(user_input,response_text)
+                tok_est=memory.history_token_estimate()
+                print_info(f"Context Usage: ~{tok_est:,} tokens")
                 session.turn_count+=1
                 kernel.sessions.save(session)
                 if AUTO_COMPACT and memory.history_token_estimate()>=COMPACT_AT_TOKENS:

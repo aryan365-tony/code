@@ -32,7 +32,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-MEMORY_SIZE: int = int(os.getenv("MEMORY_SIZE", "6"))
+MEMORY_SIZE: int = int(os.getenv("MEMORY_SIZE", "10"))
 STORAGE_DIR: Path = Path(os.getenv("STORAGE_DIR", "./storage"))
 
 MEMORY_SNIPPET_LIMIT: int = int(os.getenv("MEMORY_SNIPPET_LIMIT", "3"))
